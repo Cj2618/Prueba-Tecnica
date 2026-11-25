@@ -1,3 +1,4 @@
+
 CREATE TABLE solicitudes (
     id SERIAL PRIMARY KEY,
 
@@ -19,18 +20,26 @@ CREATE TABLE solicitudes (
 
     comentario_cierre VARCHAR(1000),
 
+    idempotency_key VARCHAR(100),
+
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-    CREATE INDEX idx_solicitudes_estado
-    ON solicitudes (estado);
-
-    CREATE INDEX idx_solicitudes_prioridad
-    ON solicitudes (prioridad);
-
-    CREATE INDEX idx_solicitudes_created_at
-    ON solicitudes (created_at DESC);
-
-    CREATE INDEX idx_solicitudes_estado_created
-    ON solicitudes (estado, created_at DESC);
 );
+
+-- Índices para optimizar las consultas
+CREATE INDEX idx_solicitudes_estado
+ON solicitudes (estado);
+
+CREATE INDEX idx_solicitudes_prioridad
+ON solicitudes (prioridad);
+
+CREATE INDEX idx_solicitudes_created_at
+ON solicitudes (created_at DESC);
+
+CREATE INDEX idx_solicitudes_estado_created
+ON solicitudes (estado, created_at DESC);
+
+CREATE UNIQUE INDEX idx_solicitudes_idempotency
+ON solicitudes (idempotency_key)
+WHERE idempotency_key IS NOT NULL;
