@@ -98,10 +98,20 @@ export async function GET(request) {
     }
 }
 
+
 export async function POST(request) {
     try {
         const datos = await request.json();
 
+        // Validar que el cuerpo sea un objeto JSON.
+        if (!datos || typeof datos !== "object" || Array.isArray(datos)) {
+            return NextResponse.json(
+                { error: { message: "El cuerpo debe ser un objeto JSON válido." } },
+                { status: 400 }
+            );
+        }
+
+        // Validar los datos de la solicitud.
         const errores = validarSolicitud(datos);
 
         if (errores.length > 0) {
@@ -116,28 +126,91 @@ export async function POST(request) {
             );
         }
 
+        // Leer la clave de idempotencia enviada en los headers.
+        const idempotencyKey =
+            request.headers.get("Idempotency-Key")?.trim() || null;
+
+        if (idempotencyKey && idempotencyKey.length > 100) {
+            return NextResponse.json(
+                { error: { message: "La clave de idempotencia supera los 100 caracteres." } },
+                { status: 422 }
+            );
+        }
+
+        // Normalizar los datos antes de almacenarlos.
+        const solicitud = {
+            titulo: datos.titulo.trim(),
+            descripcion: datos.descripcion.trim(),
+            prioridad: datos.prioridad,
+            solicitante_nombre: datos.solicitante_nombre.trim(),
+            solicitante_email: datos.solicitante_email.trim()
+        };
+
+        // Intentar crear la solicitud.
         const resultado = await pool.query(
             `INSERT INTO solicitudes (
                 titulo,
                 descripcion,
                 prioridad,
                 solicitante_nombre,
-                solicitante_email
+                solicitante_email,
+                idempotency_key
             )
-            VALUES ($1, $2, $3, $4, $5)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+            DO NOTHING
             RETURNING *`,
             [
-                datos.titulo.trim(),
-                datos.descripcion.trim(),
-                datos.prioridad,
-                datos.solicitante_nombre.trim(),
-                datos.solicitante_email.trim()
+                solicitud.titulo,
+                solicitud.descripcion,
+                solicitud.prioridad,
+                solicitud.solicitante_nombre,
+                solicitud.solicitante_email,
+                idempotencyKey
             ]
         );
 
+        // Si se insertó, es una solicitud nueva.
+        if (resultado.rows.length > 0) {
+            return NextResponse.json(
+                { data: resultado.rows[0], replayed: false },
+                { status: 201 }
+            );
+        }
+
+        // Si no se insertó, la clave ya estaba registrada.
+        const consultaExistente = await pool.query(
+            "SELECT * FROM solicitudes WHERE idempotency_key = $1",
+            [idempotencyKey]
+        );
+
+        const existente = consultaExistente.rows[0];
+
+        // Comprobar que la clave no se haya reutilizado
+        // para enviar una operación diferente.
+        const mismosDatos =
+            existente.titulo === solicitud.titulo &&
+            existente.descripcion === solicitud.descripcion &&
+            existente.prioridad === solicitud.prioridad &&
+            existente.solicitante_nombre === solicitud.solicitante_nombre &&
+            existente.solicitante_email === solicitud.solicitante_email;
+
+        if (!mismosDatos) {
+            return NextResponse.json(
+                {
+                    error: {
+                        message: "La clave de idempotencia ya fue utilizada con otros datos."
+                    }
+                },
+                { status: 409 }
+            );
+        }
+
+        // Devolver el registro original sin crear otro.
         return NextResponse.json(
-            { data: resultado.rows[0] },
-            { status: 201 }
+            { data: existente, replayed: true },
+            { status: 200 }
         );
 
     } catch (error) {
